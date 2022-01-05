@@ -18,7 +18,7 @@ BW=45m
 log_file="/var/log/bck/bck_$(date -u '+%F_%T').log"
 
 #### Fail checks ####
-# If local and remote size differs more than X %, backup is ABORTED.
+# If local and remote size differs more than 10%, backup is ABORTED.
 diff_allowed=10
 # If local or remote folder size is less than 1TB, backup is ABORTED.
 min_size=1000000
