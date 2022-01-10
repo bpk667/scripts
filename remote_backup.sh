@@ -1,36 +1,20 @@
 #!/bin/bash -eu
 
-## Copy remote folder to local folder.
+## Copy remote folder to local folder (bck_r2l).
 ## TL;TR: rsync --delete --exclude $exclusions $remote_host:$remote_path $local_path
 
+## Copy encrypted local folder to remote folder (bck_l2r).
+## TL;TR: encfs --reverse local_folder encrypt_folder && rsync --delete encrypted_folder remote_host:$remote_folder
 
 # Config parameters
-source /usr/local/bin/remote_backup.conf
+CONFFILE="/usr/local/bin/remote_backup.conf"
 
-# VARS (overwrite .conf file values)
-#declare -A bck_r2l
-#bck_r2l[remote_host]=remotehost.com
-#bck_r2l[remote_path]=/mnt/nfs/data_host2/
-#bck_r2l[local_path]=/mnt/bck_host2/
-#bck_r2l[exclusions]=/mnt/nfs/data_host2/excluded/
-
-#declare -A bck_l2r
-#bck_l2r[remote_host]=remotehost.com
-#bck_l2r[remote_path]=/mnt/nfs/bck_host1_encrypted/
-#bck_l2r[local_path]=/mnt/data_host1_encrypted/
-#bck_l2r[local_unencrypted]='/mnt/data_host1/'
-#bck_l2r[exclusions]=/mnt/nfs/data_host1_encrypted/excluded/  # Useless with encrypted paths. Kept for simplicity
-
-#address=root@localhost
-
-# Max. Bandwidth
-BW=45m
-
-#### Fail checks ####
-# If local and remote size differs more than 10%, backup is ABORTED.
-diff_allowed=10
-# If local or remote folder size is less than 1TB, backup is ABORTED.
-min_size=1000000
+if [ -f "$CONFFILE" ] ; then
+  source "$CONFFILE" 
+else
+  echo "ERROR: Missing config file $CONFFILE"
+  exit -1
+fi
 
 sendEmail() {
 	SUBJECT="$1"
@@ -170,6 +154,3 @@ checkSizes bck_l2r
 echo "Initiating backup:"
 backup bck_l2r 
 unmountEncPath bck_l2r
-
-# bpk's backup
-#encfs --reverse /media/bpk/datos/ /media/bpk/encrypted_bpk/
