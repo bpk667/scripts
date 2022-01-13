@@ -16,6 +16,24 @@ else
   exit -1
 fi
 
+print_help () {
+  echo "Help"
+}
+
+processArgs(){
+  L2R=TRUE  # Backup from localhost (encrypted) to remote
+  R2L=TRUE  # Backup from remote to localhost
+  RECOVER=FALSE
+  for i in $@; do
+    case "$i" in 
+      "-nol2r")           L2R=FALSE ;;
+      "-nor2l")           R2L=FALSE ;;
+      "-recover" | "-r")  RECOVER=TRUE ;;
+      *)                  echo "ERROR: Unkown parameter." && print_help && exit -1 ;;
+    esac
+  done
+}
+
 sendEmail() {
 	SUBJECT="$1"
   BODY="$2"
@@ -55,7 +73,7 @@ checkSizes() {
   local exclusions="${params[exclusions]}"
   local remote_host="${params[remote_host]}"
   sizeLocal="$(du -sm ${pathLocal} 2>/dev/null | awk '{print $1}')"
-  sizeRemote="$(ssh -q ${remote_host} "du -sm ${pathRemote}" --exclude=${exclusions} 2>/dev/null | awk '{print $1}')"
+  sizeRemote="$(ssh -F ${SSH_CONFIG} -q ${remote_host} "du -sm ${pathRemote}" --exclude=${exclusions} 2>/dev/null | awk '{print $1}')"
   echo "Comparing folders size (max allowed diff: ${diff_allowed}%)"
   getAbsDiff ${sizeRemote} ${sizeLocal}
   if [ $absdiff -gt ${diff_allowed} ]; then
@@ -79,17 +97,19 @@ checkSizes() {
 }
 
 checkPerms() {
-  echo "Checking remote folder permisssions"
   local -n params=$1
-  local path="${params[remote_path]}"
+  local local_path="${params[local_path]}"
+  local remote_path="${params[remote_path]}"
   local exclusions="${params[exclusions]}"
   local remote_host="${params[remote_host]}"
   # "cat" artifact added to overwrite return code from find (we want to continue regardless the permission errors).
-  unavailable="$(ssh -q ${remote_host} "find ${path} -path ${exclusions} -prune -o -print 2>/dev/stdout >/dev/null |cat")"
-  if [ ${#unavailable} != 0 ] ; then
+  unavailableRemote="$(ssh -F ${SSH_CONFIG} -q ${remote_host} "find ${remote_path} -path ${exclusions} -prune -o -print 2>/dev/stdout >/dev/null |cat")"
+  unavailableLocal="$(find ${local_path} -path ${exclusions} -prune -o -print 2>/dev/stdout >/dev/null |cat)"
+  if ( [ ${#unavailableRemote} != 0 ] ||  [ ${#unavailableLocal} != 0 ]); then
     BODY="*********************************"$'\n'
     BODY=$BODY$"WARNING: Permission denied errors:"$'\n\n'
-    BODY=$BODY$"$unavailable"$'\n\n'
+    BODY=$BODY$"Remote warnings: $unavailableRemote"$'\n\n'
+    BODY=$BODY$"Local warnings: $unavailableLocal"$'\n\n'
     BODY=$BODY$"*********************************"$'\n\n'
     sendEmail "Remote backup WARNING: Some files were not copied" "$BODY"
   fi
@@ -112,11 +132,16 @@ backup() {
     echo "Log file:$log_file"
   fi
   if [[ "$flow" == "r2l" ]] ; then
-    rsync -avP --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW ${remote_host}:${remote_path} ${local_path} >> ${log_file} 2>&1
+    rsync -avP -e "ssh -F ${SSH_CONFIG}" --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW ${remote_host}:${remote_path} ${local_path} >> ${log_file} 2>&1
     sendEmail "Remote backup OK. ${remote_host}:${remote_path} -> $local_path" ""
     echo "Backup success"
   elif [[ "$flow" == "l2r" ]] ; then
-    rsync -avP --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW "${local_path}" ${remote_host}:${remote_path}  >> ${log_file} 2>&1
+    set +e
+    rsync -avP -e "ssh -F ${SSH_CONFIG}" --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW "${local_path}" ${remote_host}:${remote_path}  >> ${log_file} 2>&1
+    if [ "$?" -ne 0 ]; then
+      echo -e "WARNING: Some errors during backup. See log file for details."
+    fi
+    set -e
     sendEmail "Remote backup OK. $local_path -> ${remote_host}:${remote_path}" ""
     echo "Backup success"
   else
@@ -125,32 +150,65 @@ backup() {
 }
 
 mountEncPath() {
-  # We will use this function to backup a folder dinamically tencrypted
+  # Temporary mount plaintext folder as encrypted folder for backup.
   local -n params=$1
   local decrypted="${params[local_unencrypted]}"
   local encrypted="${params[local_path]}"
-  echo ${encfs_pwd} |encfs -c $ENCFS6_CONFIG -S --reverse "${decrypted}" "${encrypted}"
+  if [[ $(mount |grep -c ${encrypted::-1}) == 0 ]] ; then
+    echo "Mounting encrypted folder ${encrypted}"
+    echo ${encfs_pwd} |encfs -c $ENCFS6_CONFIG -o umask=077 -S --reverse "${decrypted}" "${encrypted}"
+  fi
 }
 
 unmountEncPath() {
-  # We will use this function to backup a folder dinamically tencrypted
+  # Unmount encrypted folder
   local -n params=$1
   local encrypted="${params[local_path]}"
-  encfs -u "${bck_l2r[encrypted]}"
+  echo "Dismounting encrypted folder ${encrypted}"
+  fusermount -u "${encrypted}"
 }
 
-echo "[$(date -u '+%F')] Starting backup from remote to localhost."
-echo "Starting checks:"
-checkPerms bck_r2l
-checkSizes bck_r2l
-echo "Initiating backup:"
-backup bck_r2l 
+recoverEncData() {
+  tmpsshfs=/tmp/sshfs
+  tmp_decrypt=/tmp/decrypted
+  mkdir -p ${tmpsshfs} ${tmp_decrypt}
 
-echo "[$(date -u '+%F')] Starting backup from localhost to remote"
-mountEncPath bck_l2r
-echo "Starting checks:"
-checkPerms bck_l2r
-checkSizes bck_l2r
-echo "Initiating backup:"
-backup bck_l2r 
-unmountEncPath bck_l2r
+  # mount remote folder
+  sshfs ${bck_l2r[remote_host]}:${bck_l2r[remote_path]} ${tmpsshfs}  -o idmap=user -o uid=`id -u` -o gid=`id -g` -o reconnect
+  # Decrypt folder
+  echo "${encfs_pwd}" | encfs -c $ENCFS6_CONFIG -S ${tmpsshfs} ${tmp_decrypt}
+  echo "Remote encrypted data available at ${tmp_decrypt}"
+  echo "After finishing, unmount the volumes with the following commands:"
+  # Umount temporary folders
+  echo "  encfs -u ${tmp_decrypt}"
+  echo "  fusermount -u ${tmpsshfs}"
+  echo "  rmdir ${tmpsshfs} ${tmp_decrypt}"
+  exit
+}
+
+processArgs $@
+
+if [[ "$RECOVER" == "TRUE" ]]; then
+  recoverEncData
+fi
+
+if [[ "$R2L" == "TRUE" ]]; then
+  echo "[$(date -u '+%F')] Starting backup from remote to localhost."
+  echo "Starting checks:"
+  checkPerms bck_r2l
+  checkSizes bck_r2l
+  echo "Initiating backup:"
+  backup bck_r2l 
+fi
+
+if [[ "$L2R" == "TRUE" ]]; then
+  echo "[$(date -u '+%F')] Starting backup from localhost to remote"
+  mountEncPath bck_l2r
+  echo "Starting checks:"
+  checkPerms bck_l2r
+  checkSizes bck_l2r
+  echo "Initiating backup:"
+  backup bck_l2r 
+  unmountEncPath bck_l2r
+fi
+
