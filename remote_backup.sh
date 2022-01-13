@@ -37,11 +37,11 @@ processArgs(){
 sendEmail() {
 	SUBJECT="$1"
   BODY="$2"
-  if [[ "$SUBJECT" == *"Remote backup OK"* ]] ; then
+  if [[ "$SUBJECT" == *"Remote backup job completed"* ]] ; then
     LOGSIZE="$(wc -l ${log_file} | awk '{print $1}')"
-    BODY=$'Remote backup completed.\n\n'
+    BODY=$"$SUBJECT."$'\n\n'
     if [ $LOGSIZE -gt 100 ] ; then
-      BODY=$BODY$'Log is too big. See attachment.\n'
+      BODY=$BODY$'Log is too big. See attachment.'$'\n\n'
     else
       BODY=$BODY$"$(cat ${log_file})"
     fi
@@ -133,17 +133,21 @@ backup() {
   fi
   if [[ "$flow" == "r2l" ]] ; then
     rsync -avP -e "ssh -F ${SSH_CONFIG}" --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW ${remote_host}:${remote_path} ${local_path} >> ${log_file} 2>&1
-    sendEmail "Remote backup OK. ${remote_host}:${remote_path} -> $local_path" ""
-    echo "Backup success"
+    SUBJECT="Remote backup job completed successfully. ${remote_host}:${remote_path} -> $local_path"
+    echo -e "BACKUP FINISHED. $SUBJECT"
+    sendEmail "$SUBJECT" ""
   elif [[ "$flow" == "l2r" ]] ; then
     set +e
     rsync -avP -e "ssh -F ${SSH_CONFIG}" --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW "${local_path}" ${remote_host}:${remote_path}  >> ${log_file} 2>&1
-    if [ "$?" -ne 0 ]; then
-      echo -e "WARNING: Some errors during backup. See log file for details."
-    fi
+    rsynccode="$?"
     set -e
-    sendEmail "Remote backup OK. $local_path -> ${remote_host}:${remote_path}" ""
-    echo "Backup success"
+    if [ "$rsynccode" -ne 0 ]; then
+      SUBJECT="Remote backup job completed with WARNINGS. $local_path -> ${remote_host}:${remote_path}"
+    else
+      SUBJECT="Remote backup job completed successfully. $local_path -> ${remote_host}:${remote_path}"
+    fi
+    echo -e "BACKUP FINISHED. $SUBJECT"
+    sendEmail "$SUBJECT" ""
   else
     echo 'ERROR: associative array must contain "l2r" (local to remote) or "r2l" (remote to local) string to define the direction of the backup'
   fi
