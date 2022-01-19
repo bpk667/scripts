@@ -24,7 +24,7 @@ validateNumber () {
 }
 
 sendEmail() {
-	SUBJECT="$1"
+  SUBJECT="$1"
   BODY="$2"
   echo "$BODY" | mail -s "$SUBJECT" $address
 }
