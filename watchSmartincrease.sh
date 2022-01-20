@@ -4,7 +4,7 @@ HDD="/dev/sdb"
 att=188 # S.M.A.R.T. attribute. 188: Command Timeout.
 ds=0 # Desired state
 address="root"
-refFile="$(readlink -f ../)/smart_state"
+refFile="$(dirname $(realpath $0))/smart_state"
 
 isRoot () {
   # Make sure only root can run our script
