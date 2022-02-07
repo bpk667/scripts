@@ -82,7 +82,7 @@ checkSizes() {
     BODY=$BODY$"Remote folder size (${pathRemote}): ${sizeRemote}"$'\n\n'
     BODY=$BODY$"Size diff: $absdiff%"
     echo "$BODY"
-    sendEmail "Remote backup error: folders differ more than $diff_allowed" "$BODY"
+    sendEmail "Remote backup error: folders differ more than $diff_allowed %" "$BODY"
     exit -1
   fi
   echo "Checking folders minimum size (Abort if size less than ${min_size}MB)"
@@ -159,6 +159,7 @@ mountEncPath() {
   local decrypted="${params[local_unencrypted]}"
   local encrypted="${params[local_path]}"
   if [[ $(mount |grep -c ${encrypted::-1}) == 0 ]] ; then
+    mkdir -p "${encrypted}"
     echo "Mounting encrypted folder ${encrypted}"
     echo ${encfs_pwd} |encfs -c $ENCFS6_CONFIG -o umask=077 -S --reverse "${decrypted}" "${encrypted}"
   fi
@@ -170,6 +171,7 @@ unmountEncPath() {
   local encrypted="${params[local_path]}"
   echo "Dismounting encrypted folder ${encrypted}"
   fusermount -u "${encrypted}"
+  rmdir "${encrypted}"
 }
 
 recoverEncData() {
