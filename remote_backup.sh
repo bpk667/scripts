@@ -132,7 +132,8 @@ backup() {
     echo "Log file:$log_file"
   fi
   if [[ "$flow" == "r2l" ]] ; then
-    rsync -avP -e "ssh -F ${SSH_CONFIG}" --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW ${remote_host}:${remote_path} ${local_path} >> ${log_file} 2>&1
+    eval "$(ssh-agent -s)"
+    rsync -avP --rsync-path='sudo /usr/bin/rsync' -e "ssh -F ${SSH_CONFIG}" --exclude ${exc} --delete -h --progress --stats --bwlimit=$BW ${remote_host}:${remote_path} ${local_path} >> ${log_file} 2>&1
     SUBJECT="Remote backup job completed successfully. ${remote_host}:${remote_path} -> $local_path"
     echo -e "BACKUP FINISHED. $SUBJECT"
     sendEmail "$SUBJECT" ""
