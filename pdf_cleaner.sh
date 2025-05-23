@@ -4,6 +4,8 @@ COMPR=60 # Compression for jpeg method
 
 TEMPDIR="/tmp/pdfcleaner"
 
+TEXT_WATERMARK="Sólo para hospedaje"
+
 checkArgs() {
     if (( $1 < 2 )); then
         print_help
@@ -23,7 +25,7 @@ Mandatory arguments:
 
 Optional argument:
   FORMAT available options:
-        - img_uncomp (default)  Convert to uncompressed images.
+        - img_uncomp (default)  Convert to uncompressed images and adds watermark.
         - img_comp              Convert to compressed images. It may create image artifacts.
         - text                  Keep text.
 
@@ -57,7 +59,7 @@ processArgs(){
             echo
             ;;
         *)
-            echo "Default method. Flattening and converting PDFs to png images without compression"
+            echo "Default method. Flattening and watermarking PDFs without compression."
             CONVERT_METHOD="img_uncomp"
             echo
             ;;
@@ -80,15 +82,29 @@ convert_using_uncompressed_images () {
     FILE_DEST="$2"
     FILE_BASENAME="$3"
     # Convert pdf to images
-    pdftoppm -q "$FILE_SRC" "${TEMPDIR}/${FILE_BASENAME}" -png
+    pdftoppm -q "$FILE_SRC" "${TEMPDIR}/${FILE_BASENAME}-clean" -png
+    # Add watermark
+    add_watermark "${TEMPDIR}/${FILE_BASENAME}-clean"
     # Convert images to pdf
-    convert "${TEMPDIR}/${FILE_BASENAME}"*png "${FILE_DEST}"
+    convert "${TEMPDIR}/${FILE_BASENAME}"-watermarked*png "${FILE_DEST}"
 }
 
 convert_keeping_text() {
     FILE_SRC="$1"
     FILE_DEST="$2"
     pdf2ps "${FILE_SRC}" - | ps2pdf - "${FILE_DEST}"
+}
+
+add_watermark() {
+    FILES_SRC="$1"
+    FILE_WATERMARK="${TEMPDIR}/watermark.png"
+    font="$(find /usr/share/fonts/ -type f -iname "*notomono*regu*" -print -quit)"
+    size="1300x1000"
+    watermark="$(convert -gravity center -rotate 30 -background None -fill white -size "$size" -font "${font}" caption:"${TEXT_WATERMARK}" "${FILE_WATERMARK}")"
+    for image in "${FILES_SRC}"*png
+    do
+        composite -dissolve 20 -gravity center "${FILE_WATERMARK}" "${image}" "${image/-clean-/-watermarked-}"
+    done
 }
 
 checkArgs $#
